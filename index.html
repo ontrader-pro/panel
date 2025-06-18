@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Índice OnTrader</title>
+  <style>
+    body { background:#101729; color:#fff; font-family:sans-serif; padding:20px; margin:0 }
+    h1 { text-align:center; color:#25f0ff }
+    #filtros { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; margin:15px 0 }
+    input, select { padding:6px; border:none; border-radius:4px; font-size:14px }
+    #panel { margin-top:10px }
+    table { width:100%; border-collapse:collapse }
+    th, td { border:1px solid #333; padding:8px; text-align:center }
+    thead { background:#1f2a44; color:#25f0ff }
+    .high { color:limegreen; font-weight:bold }
+    .mid  { color:orange;    font-weight:bold }
+    .low  { color:red;       font-weight:bold }
+    #alerta {
+      position:fixed; bottom:20px; right:20px;
+      background:#ff4444; color:#fff; padding:10px 15px;
+      border-radius:5px; display:none; box-shadow:0 0 6px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Índice OnTrader</h1>
+
+  <div id="filtros">
+    <input type="text" id="buscar" placeholder="Buscar cripto…">
+    <select id="orden">
+      <option value="desc">Mayor Índice</option>
+      <option value="asc">Menor Índice</option>
+    </select>
+  </div>
+
+  <div id="panel">Cargando datos…</div>
+  <div id="alerta"></div>
+
+  <script>
+    // --- CONFIGURACIÓN ---
+    const pares = [
+      "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","LINKUSDT"
+    ];
+    // Máximos/mínimos domingo (ajusta con tus valores reales)
+    const domingo = {
+      BTCUSDT:{max:67000,min:65000},
+      ETHUSDT:{max:3500,min:3420},
+      BNBUSDT:{max:450,min:430},
+      SOLUSDT:{max:150,min:142},
+      XRPUSDT:{max:0.55,min:0.51},
+      ADAUSDT:{max:0.44,min:0.41},
+      DOGEUSDT:{max:0.16,min:0.155},
+      AVAXUSDT:{max:30,min:28},
+      DOTUSDT:{max:6.5,min:6.2},
+      LINKUSDT:{max:16,min:15}
+    };
+    // Proxy para evitar CORS
+    const proxy = url => 'https://api.allorigins.win/raw?url='+encodeURIComponent(url);
+
+    let dataGlobal = [], alerted = new Set();
+
+    async function actualizar() {
+      const resultados = [];
+      for (let par of pares) {
+        try {
+          // 1) Precio
+          const p = await fetch(proxy(`https://api.binance.com/api/v3/ticker/price?symbol=${par}`))
+            .then(r=>r.json());
+          const precio = parseFloat(p.price);
+          // 2) Velas (15 cierres 1h)
+          const kl = await fetch(proxy(`https://api.binance.com/api/v3/klines?symbol=${par}&interval=1h&limit=15`))
+            .then(r=>r.json());
+          const cierres = kl.map(k=>parseFloat(k[4]));
+          // 3) EMA28 & RSI14
+          const ema = calcEMA(cierres,14);
+          const rsi = calcRSI(cierres);
+          // 4) Índice OnTrader
+          const {max,min} = domingo[par]||{};
+          let score=0;
+          if (precio>min) score+=1;
+          if (precio>(min+max)/2) score+=2;
+          if (precio>max) score+=2;
+          if (precio<min) score+=2;
+          if ((precio%1)<0.2) score+=1;
+          if (precio>ema) score+=2;
+          if (rsi>60||rsi<40) score+=2.5;
+          score = Math.min(10, Math.max(1, score));
+          // 5) Alerta
+          const alerta = score>=7 ? `🚨 ${par.replace('USDT','')} Índice ${score}` : '-';
+          resultados.push({cripto:par.replace('USDT',''), precio, indice:score, alerta});
+        } catch(e) {
+          console.warn('Error', par, e);
+        }
+      }
+      dataGlobal = resultados;
+      renderTabla();
+      mostrarAlerta();
+    }
+
+    function calcEMA(vals,p){
+      const k=2/(p+1);
+      return vals.reduce((a,v,i)=> i? v*k + a*(1-k): v, 0);
+    }
+    function calcRSI(c){
+      let g=0,l=0;
+      for(let i=1;i<c.length;i++){
+        const d=c[i]-c[i-1];
+        if(d>0) g+=d; else l-=d;
+      }
+      const avgG=g/(c.length-1), avgL=l/(c.length-1), rs=avgG/(avgL||1);
+      return 100-(100/(1+rs));
+    }
+
+    function renderTabla(){
+      const ord = document.getElementById('orden').value;
+      const bus = document.getElementById('buscar').value.toLowerCase();
+      let arr = dataGlobal.filter(d=>d.cripto.toLowerCase().includes(bus));
+      arr.sort((a,b)=> ord==='desc'? b.indice-a.indice : a.indice-b.indice);
+      let html = '<table><thead><tr><th>Cripto</th><th>Precio</th><th>Índice</th><th>Alerta</th></tr></thead><tbody>';
+      for (let d of arr) {
+        html += `<tr>
+          <td>${d.cripto}</td>
+          <td>${d.precio.toFixed(4)}</td>
+          <td class="${d.indice>=8?'high':d.indice>=5?'mid':'low'}">${d.indice}</td>
+          <td>${d.alerta}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('panel').innerHTML = html;
+    }
+
+    function mostrarAlerta(){
+      const al = document.getElementById('alerta');
+      const n = dataGlobal.find(d=>d.indice>=7 && !alerted.has(d.cripto));
+      if(n){
+        alerted.add(n.cripto);
+        al.innerText = n.alerta;
+        al.style.display = 'block';
+        new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg').play();
+        setTimeout(()=> al.style.display='none', 10000);
+      }
+    }
+
+    document.getElementById('buscar').addEventListener('input', renderTabla);
+    document.getElementById('orden').addEventListener('change', renderTabla);
+
+    actualizar();
+    setInterval(actualizar, 30000);
+  </script>
+</body>
+</html>
