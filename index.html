@@ -1,6 +1,6 @@
 <script>
-  const pares = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT", /* etc */];
-  const domingo = { /* tus valores */ };
+  const pares = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
+  const domingo = { /* tus máximos/minimos */ };
   const proxy = url => 'https://thingproxy.freeboard.io/fetch/' + url;
   let dataGlobal = [], alerted = new Set();
 
@@ -8,28 +8,30 @@
     const resultados = [];
     for (let par of pares) {
       try {
-        const precioRes = await fetch(proxy(`https://api.binance.com/api/v3/ticker/price?symbol=${par}`));
-        const { price } = await precioRes.json();
-        const precio = parseFloat(price);
-        const klRes = await fetch(proxy(`https://api.binance.com/api/v3/klines?symbol=${par}&interval=1h&limit=15`));
-        const kl = await klRes.json();
-        const cierres = kl.map(k => parseFloat(k[4]));
-        const ema = calcEMA(cierres, 28);
-        const rsi = calcRSI(cierres);
-        const { max, min } = domingo[par] || {};
-        let score = 0;
-        if (precio > min) score += 1;
-        if (precio > (min + max)/2) score += 2;
-        if (precio > max) score += 2;
-        if (precio < min) score += 2;
-        if ((precio % 1) < 0.2) score += 1;
-        if (precio > ema) score += 2;
-        if (rsi > 60 || rsi < 40) score += 2.5;
-        score = Math.min(10, Math.max(1, score));
-        const alerta = score >= 7 ? `🚨 ${par.replace('USDT','')} Índice ${score}` : '-';
-        resultados.push({ cripto: par.replace('USDT',''), precio, indice: score, alerta });
+        const p  = await fetch(proxy(`https://api.binance.com/api/v3/ticker/price?symbol=${par}`)).then(r=>r.json());
+        const precio = parseFloat(p.price);
+
+        const kl = await fetch(proxy(`https://api.binance.com/api/v3/klines?symbol=${par}&interval=1h&limit=15`))
+                         .then(r=>r.json());
+        const cierres = kl.map(k=>parseFloat(k[4]));
+        const ema  = calcEMA(cierres,28);
+        const rsi  = calcRSI(cierres);
+
+        const {max,min} = domingo[par]||{};
+        let score=0;
+        if(precio>min) score+=1;
+        if(precio>(min+max)/2) score+=2;
+        if(precio>max) score+=2;
+        if(precio<min) score+=2;
+        if((precio%1)<0.2) score+=1;
+        if(precio>ema) score+=2;
+        if(rsi>60||rsi<40) score+=2.5;
+        score = Math.min(10,Math.max(1,score));
+
+        const alerta = score>=7 ? `🚨 ${par.replace('USDT','')} Índice ${score}` : '-';
+        resultados.push({crypto:par.replace('USDT',''), precio, indice:score, alerta});
       } catch(e) {
-        console.warn('Error con', par, e);
+        console.warn('Fetch error',par,e);
       }
     }
     dataGlobal = resultados;
@@ -37,27 +39,30 @@
     mostrarAlerta();
   }
 
-  function calcEMA(vals, p) {
-    const k = 2/(p+1);
-    return vals.reduce((a,v,i)=> i? v*k + a*(1-k) : v, 0);
+  function calcEMA(vals,p){
+    const k=2/(p+1);
+    return vals.reduce((a,v,i)=> i? v*k + a*(1-k):v,0);
   }
-  function calcRSI(c) {
-    let gains=0, losses=0;
-    for (let i=1; i<c.length; i++) {
-      const d = c[i] - c[i-1];
-      if (d>0) gains+=d; else losses-=d;
+  function calcRSI(c){
+    let g=0,l=0;
+    for(let i=1;i<c.length;i++){
+      const d=c[i]-c[i-1];
+      d>0?g+=d:l-=d;
     }
-    const avgG = gains/(c.length-1), avgL = losses/(c.length-1) || 1e-6;
-    const rs = avgG/avgL;
-    return 100 - (100/(1+rs));
+    const ag=g/(c.length-1), al=l/(c.length-1)||1e-6, rs=ag/al;
+    return 100-(100/(1+rs));
   }
 
-  function renderTabla() { /* tu código existente para pintar #panel */ }
-  function mostrarAlerta() { /* tu código existente para #alerta */ }
+  function renderTabla(){
+    /* tu código para pintar #panel */
+  }
+  function mostrarAlerta(){
+    /* tu código para el floating #alerta */
+  }
 
   document.getElementById('buscar').addEventListener('input', renderTabla);
   document.getElementById('orden').addEventListener('change', renderTabla);
 
   actualizar();
-  setInterval(actualizar, 30000);
+  setInterval(actualizar,30000);
 </script>
