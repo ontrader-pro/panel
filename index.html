@@ -1,7 +1,10 @@
 <script>
   const pares = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
   const domingo = { /* tus máximos/minimos */ };
-  const proxy = url => 'https://thingproxy.freeboard.io/fetch/' + url;
+ - const proxy = url => 'https://api.allorigins.win/raw?url='+encodeURIComponent(url);
++ // Proxy que añade Access-Control-Allow-Origin para Binance
++ const proxy = url => 'https://thingproxy.freeboard.io/fetch/' + url;
+
   let dataGlobal = [], alerted = new Set();
 
   async function actualizar() {
