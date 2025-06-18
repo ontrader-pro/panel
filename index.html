@@ -1,9 +1,15 @@
 <script>
   const pares = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"];
-  const domingo = { /* tus máximos/minimos */ };
- - const proxy = url => 'https://api.allorigins.win/raw?url='+encodeURIComponent(url);
-+ // Proxy que añade Access-Control-Allow-Origin para Binance
-+ const proxy = url => 'https://thingproxy.freeboard.io/fetch/' + url;
+  const domingo = {
+    BTCUSDT:{max:67000,min:65000},
+    ETHUSDT:{max:3500,min:3420},
+    BNBUSDT:{max:450,min:430},
+    SOLUSDT:{max:150,min:142},
+    XRPUSDT:{max:0.55,min:0.51}
+  };
+
+  // Proxy que añade el header CORS para permitir requests a Binance
+  const proxy = url => 'https://thingproxy.freeboard.io/fetch/' + url;
 
   let dataGlobal = [], alerted = new Set();
 
@@ -11,30 +17,41 @@
     const resultados = [];
     for (let par of pares) {
       try {
-        const p  = await fetch(proxy(`https://api.binance.com/api/v3/ticker/price?symbol=${par}`)).then(r=>r.json());
+        // 1) Precio
+        const p = await fetch(proxy(`https://api.binance.com/api/v3/ticker/price?symbol=${par}`))
+                          .then(r => r.json());
         const precio = parseFloat(p.price);
 
-        const kl = await fetch(proxy(`https://api.binance.com/api/v3/klines?symbol=${par}&interval=1h&limit=15`))
-                         .then(r=>r.json());
-        const cierres = kl.map(k=>parseFloat(k[4]));
-        const ema  = calcEMA(cierres,28);
-        const rsi  = calcRSI(cierres);
+        // 2) Velas 1h (15 cierres)
+        const kl = await fetch(proxy(
+          `https://api.binance.com/api/v3/klines?symbol=${par}&interval=1h&limit=15`
+        )).then(r => r.json());
+        const cierres = kl.map(k => parseFloat(k[4]));
 
-        const {max,min} = domingo[par]||{};
-        let score=0;
-        if(precio>min) score+=1;
-        if(precio>(min+max)/2) score+=2;
-        if(precio>max) score+=2;
-        if(precio<min) score+=2;
-        if((precio%1)<0.2) score+=1;
-        if(precio>ema) score+=2;
-        if(rsi>60||rsi<40) score+=2.5;
-        score = Math.min(10,Math.max(1,score));
+        // 3) Cálculo EMA28 y RSI14
+        const ema = calcEMA(cierres, 28);
+        const rsi = calcRSI(cierres);
 
-        const alerta = score>=7 ? `🚨 ${par.replace('USDT','')} Índice ${score}` : '-';
-        resultados.push({crypto:par.replace('USDT',''), precio, indice:score, alerta});
+        // 4) Índice OnTrader
+        const {max,min} = domingo[par];
+        let score = 0;
+        if (precio > min) score += 1;
+        if (precio > (min + max)/2) score += 2;
+        if (precio > max) score += 2;
+        if (precio < min) score += 2;
+        if ((precio % 1) < 0.2) score += 1;
+        if (precio > ema) score += 2;
+        if (rsi > 60 || rsi < 40) score += 2.5;
+        score = Math.min(10, Math.max(1, score));
+
+        // 5) Alerta
+        const alerta = score >= 7
+          ? `🚨 ${par.replace('USDT','')} Índice ${score}`
+          : '-';
+
+        resultados.push({cripto: par.replace('USDT',''), precio, indice: score, alerta});
       } catch(e) {
-        console.warn('Fetch error',par,e);
+        console.warn('Fetch error', par, e);
       }
     }
     dataGlobal = resultados;
@@ -42,30 +59,67 @@
     mostrarAlerta();
   }
 
-  function calcEMA(vals,p){
-    const k=2/(p+1);
-    return vals.reduce((a,v,i)=> i? v*k + a*(1-k):v,0);
-  }
-  function calcRSI(c){
-    let g=0,l=0;
-    for(let i=1;i<c.length;i++){
-      const d=c[i]-c[i-1];
-      d>0?g+=d:l-=d;
-    }
-    const ag=g/(c.length-1), al=l/(c.length-1)||1e-6, rs=ag/al;
-    return 100-(100/(1+rs));
+  function calcEMA(vals, period) {
+    const k = 2/(period + 1);
+    return vals.reduce((acc, v, i) => i
+      ? v * k + acc * (1 - k)
+      : v
+    );
   }
 
-  function renderTabla(){
-    /* tu código para pintar #panel */
+  function calcRSI(c) {
+    let gains = 0, losses = 0;
+    for (let i = 1; i < c.length; i++) {
+      const d = c[i] - c[i-1];
+      if (d > 0) gains += d;
+      else losses -= d;
+    }
+    const avgG = gains/(c.length - 1);
+    const avgL = losses/(c.length - 1) || 1e-6;
+    const rs = avgG/avgL;
+    return 100 - (100/(1 + rs));
   }
-  function mostrarAlerta(){
-    /* tu código para el floating #alerta */
+
+  function renderTabla() {
+    const ord = document.getElementById('orden').value;
+    const bus = document.getElementById('buscar').value.toLowerCase();
+    let arr = dataGlobal.filter(d => d.cripto.toLowerCase().includes(bus));
+    arr.sort((a,b) => ord === 'desc' ? b.indice - a.indice : a.indice - b.indice);
+
+    let html = `<table><thead>
+      <tr><th>Cripto</th><th>Precio</th><th>Índice</th><th>Alerta</th></tr>
+    </thead><tbody>`;
+
+    for (let d of arr) {
+      const cls = d.indice >= 8 ? 'high' : d.indice >= 5 ? 'mid' : 'low';
+      html += `<tr>
+        <td>${d.cripto}</td>
+        <td>${d.precio.toFixed(4)}</td>
+        <td class="${cls}">${d.indice}</td>
+        <td>${d.alerta}</td>
+      </tr>`;
+    }
+
+    html += `</tbody></table>`;
+    document.getElementById('panel').innerHTML = html;
+  }
+
+  function mostrarAlerta() {
+    const al = document.getElementById('alerta');
+    const n = dataGlobal.find(d => d.indice >= 7 && !alerted.has(d.cripto));
+    if (n) {
+      alerted.add(n.cripto);
+      al.innerText = n.alerta;
+      al.style.display = 'block';
+      new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg').play();
+      setTimeout(() => al.style.display = 'none', 10000);
+    }
   }
 
   document.getElementById('buscar').addEventListener('input', renderTabla);
   document.getElementById('orden').addEventListener('change', renderTabla);
 
+  // Primera carga y cada 30s
   actualizar();
-  setInterval(actualizar,30000);
+  setInterval(actualizar, 30000);
 </script>
